@@ -1,4 +1,4 @@
-"""Entry point for project_name."""
+"""Entry point for dometic_cfx3."""
 
 from .cli import main  # pragma: no cover
 

@@ -1,5 +1,5 @@
-from project_name.base import NAME
+from dometic_cfx3.base import NAME
 
 
 def test_base():
-    assert NAME == "project_name"
+    assert NAME == "dometic_cfx3"
