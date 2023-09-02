@@ -3,23 +3,73 @@ import logging
 
 from dometic_cfx3.client import WifiClient
 from dometic_cfx3.topics import DataAction, DataTopic
+from ha_mqtt_discoverable import Settings, DeviceInfo
+from ha_mqtt_discoverable.sensors import Sensor, SensorInfo, BinarySensor, BinarySensorInfo, Switch, SwitchInfo
+from paho.mqtt.client import Client, MQTTMessage
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
+
+from queue import Queue
+ 
 
 
 async def test():
     async with WifiClient("localhost", 13142) as client:
-        async def callback(topic: DataTopic, value: str):
+        # Configure the required parameters for the MQTT broker
+        mqtt_settings = Settings.MQTT(host="192.168.103.138")
+        sn = await client.get_product_serial_number()
+        device_info = DeviceInfo(name=await client.get_device_name(), manufacturer="Dometic", hw_version=sn, identifiers=sn)
+
+      
+        dt = {}
+        loop = asyncio.get_event_loop()
+        command_queue = Queue()
+        def toggle(_: Client, topic, message: MQTTMessage):
+            payload = message.payload.decode()
+            logging.info(f"Received {payload} from HA")
+            asyncio.run_coroutine_threadsafe(client.publish(topic, True if payload == "ON" else False), loop)
+            if payload == "ON":
+                dt.get(topic).on()
+            else:
+                dt.get(topic).off()
+
+
+        dt[DataTopic.DOOR_ALERT] = BinarySensor(Settings(mqtt=mqtt_settings, entity=BinarySensorInfo(name="door_alert", unique_id="door_alert", device=device_info)))
+        dt[DataTopic.PRODUCT_SERIAL_NUMBER] = Sensor(Settings(mqtt=mqtt_settings, entity=SensorInfo(name="serial_number", unique_id="serial_number", device=device_info)))
+        dt[DataTopic.COOLER_POWER] = Switch(Settings(mqtt=mqtt_settings, entity=SwitchInfo(name="cooler_power", unique_id="cooler_power", device=device_info)), toggle, DataTopic.COOLER_POWER)
+        dt[DataTopic.COMPARTMENT_0_MEASURED_TEMPERATURE] = Sensor(Settings(mqtt=mqtt_settings, entity=SensorInfo(name="compartment_temperature", unique_id="compartment_temperature", unit_of_measurement="°C", device=device_info)))
+        dt[DataTopic.COMPARTMENT_0_SET_TEMPERATURE] = Sensor(Settings(mqtt=mqtt_settings, entity=SensorInfo(name="compartment_setpoint", unique_id="compartment_setpoint", unit_of_measurement="°C", device=device_info)))
+        dt[DataTopic.BATTERY_VOLTAGE_LEVEL] = Sensor(Settings(mqtt=mqtt_settings, entity=SensorInfo(name="battery_voltage", unique_id="battery_voltage", unit_of_measurement="V", device=device_info)))
+        dt[DataTopic.POWER_SOURCE] = Sensor(Settings(mqtt=mqtt_settings, entity=SensorInfo(name="power_source", unique_id="power_source", device=device_info)))
+
+
+
+        async def callback(topic: DataTopic, value):
+            if topic in dt:
+                sensor = dt.get(topic)
+                print(sensor)
+                if isinstance(sensor, BinarySensor):
+                    if value:
+                        sensor.on()
+                    else:
+                        sensor.off()
+                elif isinstance(sensor, Sensor):
+                    if topic == DataTopic.POWER_SOURCE:
+                        value = "dc" if value == 1 else "ac"
+                    sensor.set_state(value)
             print(f"{topic}: {value}")
 
         await client.subscribe(callback)
-        await client.send(DataAction.PING.value)
-        # await client.subscribe(DataTopic.SUBSCRIBE_APP_DZ)
-        print(f"Name: {await client.get_device_name()}")
+        # for topic, _ in dt.items():
+        #     await client.subscribe(callback, topic=topic)
+
+        # await client.send(DataAction.PING.value)
+        # await client.publish(DataTopic.COOLER_POWER, True)
+        # print(f"Name: {await client.get_device_name()}")
         print(f"compartments: {await client.get_compartment_count()}")
-        print(f"icemaker: {await client.get_icemaker_count()}")
+        # print(f"icemaker: {await client.get_icemaker_count()}")
         print(f"door: {await client.get_door_alert()}")
-        print(f"get_device_name: {await client.get_device_name()}")
+        # print(f"get_device_name: {await client.get_device_name()}")
         # print(
         #     f"get_communication_alarm: {await client.get_communication_alarm()}"
         # )
@@ -134,7 +184,10 @@ async def test():
         # print(
         #     f"get_product_serial_number: {await client.get_product_serial_number()}"
         # )
-    asyncio.get_event_loop().run_forever()
+        while True:
+            await asyncio.sleep(1)
+        #     topic, value = command_queue.get()
+        #     await client.publish(topic, value)
 
 
 def main():  # pragma: no cover
